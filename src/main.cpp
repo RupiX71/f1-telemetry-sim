@@ -13,8 +13,9 @@ int main() {
     for(int i = 0 ; i < num_setups ; ++i) {
         setups[i].id = i;
         setups[i].mass_kg = 798.0f; // minimal mass in f1 rn
-        setups[i].engine_power_kw = 700.f + (i * (50.0f / num_setups));
-
+        setups[i].ice_power_kw = 200.f + (i * (200.0f / num_setups));
+        setups[i].mguk_power_kw = 200.f + (i * (150.f / num_setups));
+        setups[i].drag_coef = 0.3f + (i * (0.5f / num_setups));
     }
 
     std::cout << "[CUDA] Sending Data to GPU..." << std::endl;
@@ -23,15 +24,11 @@ int main() {
 
     std::cout << "[CPU] Success here are the results: \n\n";
 
-    // Imprimir o Setup 0, o do meio e o último
-    std::cout << "Setup ID: " << results[0].setup_id 
-              << " (Potencia Menor) -> 0-100 km/h: " << results[0].time_to_100_s << "s\n";
-              
-    std::cout << "Setup ID: " << results[num_setups/2].setup_id 
-              << " (Potencia Media) -> 0-100 km/h: " << results[num_setups/2].time_to_100_s << "s\n";
-              
-    std::cout << "Setup ID: " << results[num_setups-1].setup_id 
-              << " (Potencia Maior) -> 0-100 km/h: " << results[num_setups-1].time_to_100_s << "s\n";
+    std::cout << "Small Power / Small Drag: "<< std::endl;
+    std::cout << "Time to 1000m: " << results[0].time_to_1000m << "s\n";
+    std::cout << "Top speed: " << results[0].top_speed_kmh << "km/h\n";
 
-    return 0;
+    std::cout << "Big Power / Big Drag: "<< std::endl;
+    std::cout << "Time to 1000m: " << results[num_setups - 1].time_to_1000m << "s\n";
+    std::cout << "Top speed: " << results[num_setups - 1].top_speed_kmh << "km/h\n";
 }
