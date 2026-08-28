@@ -1,8 +1,21 @@
 #include <iostream>
 #include <vector>
+#include <random>
+#include <algorithm>
 #include "physics.cuh"
+#include "circuit_loader.h"
+#include "visualizer.h"
 
 int main() {
+    std::string track_file = "../data/monza_pole.csv";
+    std::cout << "[CPU] Loading circuit from: " << track_file << std::endl;
+
+    std::vector<TrackSegment> track = load_circuit_csv(track_file);
+
+    if (track.empty()) return -1;
+
+    std::cout << "[CPU] Track loaded! Total segments: " << track.size() << std::endl;
+
     int num_setups = 100000;
     
     std::cout << "[CPU] Generating " << num_setups << " different setups..." << std::endl;
@@ -10,25 +23,37 @@ int main() {
     std::vector<CarSetup> setups(num_setups);
     std::vector<SimResult> results(num_setups);
 
+    std::mt19937 gen(888); 
+    std::uniform_real_distribution<float> ice_dist(380.0f, 420.0f);
+    std::uniform_real_distribution<float> mguk_dist(300.0f, 350.0f);
+    std::uniform_real_distribution<float> drag_dist(0.7f, 1.2f);
+
     for(int i = 0 ; i < num_setups ; ++i) {
         setups[i].id = i;
-        setups[i].mass_kg = 798.0f; // minimal mass in f1 rn
-        setups[i].ice_power_kw = 200.f + (i * (200.0f / num_setups));
-        setups[i].mguk_power_kw = 200.f + (i * (150.f / num_setups));
-        setups[i].drag_coef = 0.3f + (i * (0.5f / num_setups));
+        setups[i].mass_kg = 805.0f; 
+        setups[i].ice_power_kw = ice_dist(gen);
+        setups[i].mguk_power_kw = mguk_dist(gen);
+        setups[i].drag_coef = drag_dist(gen);
     }
 
     std::cout << "[CUDA] Sending Data to GPU..." << std::endl;
 
-    run_simulation_batch(setups.data(), results.data(), num_setups);
+    run_simulation_batch(setups.data(), results.data(), track.data(), track.size(), num_setups);
 
     std::cout << "[CPU] Success here are the results: \n\n";
 
-    std::cout << "Small Power / Small Drag: "<< std::endl;
-    std::cout << "Time to 1000m: " << results[0].time_to_1000m << "s\n";
-    std::cout << "Top speed: " << results[0].top_speed_kmh << "km/h\n";
+    std::sort(results.begin(), results.end(), [](const SimResult& a, const SimResult& b) {
+        return a.lap_time < b.lap_time;
+    });
 
-    std::cout << "Big Power / Big Drag: "<< std::endl;
-    std::cout << "Time to 1000m: " << results[num_setups - 1].time_to_1000m << "s\n";
-    std::cout << "Top speed: " << results[num_setups - 1].top_speed_kmh << "km/h\n";
+    CarSetup pole_position_setup = setups[results[0].setup_id];
+
+    std::cout << " ----- Pole Position -----" << std::endl;
+    std::cout << " ----- Setup Id: " << results[0].setup_id << std::endl;
+    std::cout << pole_position_setup.ice_power_kw << "kw(ICE)|" << pole_position_setup.mguk_power_kw << "kw(MGU-K)|" << 
+    pole_position_setup.drag_coef << "(DRAG)" << std::endl;
+    std::cout << " ----- Lap Time: " << results[0].lap_time << std::endl;
+    std::cout << " ----- Max Velocity: " << results[0].top_speed_kmh << std::endl;
+
+    run_sfml_visualizer(track, pole_position_setup);
 }

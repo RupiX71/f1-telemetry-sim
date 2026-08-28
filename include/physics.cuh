@@ -10,15 +10,23 @@ struct CarSetup {
     float drag_coef;                    // Aerodynamic Coefficient
 };
 
+// track segment
+struct TrackSegment {
+    float length_m;                     // 
+    float radius_m;                     //
+    float x;                            //
+    float y;                            // 
+};
+
 // Results
 struct SimResult {
     int setup_id;
-    float time_to_1000m;                 // Time it takes for 1000m straight line
+    float lap_time;                     // Time it takes for 1000m straight line
     float top_speed_kmh;                // speed at 1000m
     float battery_left_mj;              // battery left after 1000m 
 };
 
 // This will start the kernel
-void run_simulation_batch(const CarSetup* setups, SimResult* results, int numSetups);
+void run_simulation_batch(const CarSetup* setups, SimResult* results, const TrackSegment* track, int num_segments, int numSetups);
 
 #endif
