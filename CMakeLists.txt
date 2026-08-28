@@ -9,6 +9,7 @@ project(F1HybridSolver LANGUAGES CXX CUDA)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(SFML 2.6 COMPONENTS graphics window system REQUIRED)
+
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 add_executable(f1_solver

@@ -40,8 +40,7 @@ curvature = np.abs(dx * ddy - dy * ddx) / denominator
 df['Radius'] = np.where(curvature > 0.001, 1/ curvature, 10000)
 
 # Smoothing
-df['Radius'] = df['Radius'].rolling(window=15, min_periods=1, center=True).mean()
-
+df['Radius'] = df['Radius'].rolling(window=3, min_periods=1, center=True).mean()
 
 df['Segment_Length'] = df['Distance'].diff().fillna(df['Distance'].iloc[0])
 
