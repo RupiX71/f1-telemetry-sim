@@ -9,8 +9,8 @@
 
 // the data that goes into the gpu
 struct CarSetup {
-    int id;
-    float mass_kg;
+    int id;                             // setup id
+    float mass_kg;                      // Mass of the car
     float ice_power_kw;                 // Internal Combustion Engine Power
     float mguk_power_kw;                // Eletric Engine Power
     float drag_coef;                    // Aerodynamic Coefficient
@@ -18,28 +18,28 @@ struct CarSetup {
 
 // Keeps the state of the car every dt
 struct CarState {
-    float v;                            // 
-    float battery_mj;                   //
-    float dist_in_seg;                  //
-    int current_idx;                    //
-    bool is_braking;                    //
-    float time_s;                       //
+    float v;                            // Velocity of the car
+    int current_seg;                    // Position of the car (segment of the circuit)
+    float current_m;                    // Current meter of the circuit
+    float battery_mj;                   // Ammount of battery
+    bool is_braking;                    // braking
+    float time_s;                       // Time on track (resets after going through finish line)
 };
 
 // track segment
 struct TrackSegment {
-    float length_m;                     // 
-    float radius_m;                     //
-    float x;                            //
-    float y;                            // 
+    float length_m;                     // Length of the segment
+    float radius_m;                     // Radius of the segment (< 10000 means curvature)
+    float x;                            // x of segment
+    float y;                            // y of segment
 };
 
 // Results
 struct SimResult {
-    int setup_id;
-    float lap_time;                     // Time it takes for 1000m straight line
-    float top_speed_kmh;                // speed at 1000m
-    float battery_left_mj;              // battery left after 1000m 
+    int setup_id;                       // Setup Id
+    float lap_time;                     // Lap Time
+    float top_speed_kmh;                // Top Speed
+    float battery_used_mj;              // Ammount of Battery Used in MJ (starting + what is regenerated)
 };
 
 CUDA_CALLABLE void step_physics(CarState* state, const CarSetup* setup, const TrackSegment* track, int num_segments, float dt);

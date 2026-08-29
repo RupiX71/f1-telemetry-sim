@@ -7,21 +7,17 @@
 void run_sfml_visualizer(const std::vector<TrackSegment>& track, const CarSetup& setup) {
     std::cout << "[SFML] A processar limites e rotacao do circuito..." << std::endl;
     
-    float angle_rad = 1.66f; 
-    float cos_theta = cos(angle_rad);
-    float sin_theta = sin(angle_rad);
-
-    std::vector<sf::Vector2f> rotated_points(track.size());
+    std::vector<sf::Vector2f> points(track.size());
 
     for (size_t i = 0; i < track.size(); ++i) {
-        rotated_points[i].x = track[i].x * cos_theta - track[i].y * sin_theta;
-        rotated_points[i].y = track[i].x * sin_theta + track[i].y * cos_theta;
+        points[i].x = track[i].x;
+        points[i].y = track[i].y;
     }
 
-    float min_x = rotated_points[0].x, max_x = rotated_points[0].x;
-    float min_y = rotated_points[0].y, max_y = rotated_points[0].y;
+    float min_x = points[0].x, max_x = points[0].x;
+    float min_y = points[0].y, max_y = points[0].y;
 
-    for (const auto& pt : rotated_points) {
+    for (const auto& pt : points) {
         if (pt.x < min_x) min_x = pt.x;
         if (pt.x > max_x) max_x = pt.x;
         if (pt.y < min_y) min_y = pt.y;
@@ -43,8 +39,8 @@ void run_sfml_visualizer(const std::vector<TrackSegment>& track, const CarSetup&
 
     sf::VertexArray track_lines(sf::LineStrip, track.size());
     for (size_t i = 0; i < track.size(); ++i) {
-        float screen_x = offset_x + (rotated_points[i].x - min_x) * scale;
-        float screen_y = offset_y + (max_y - rotated_points[i].y) * scale;
+        float screen_x = offset_x + (points[i].x - min_x) * scale;
+        float screen_y = offset_y + (max_y - points[i].y) * scale;
 
         track_lines[i].position = sf::Vector2f(screen_x, screen_y);
         track_lines[i].color = sf::Color(150, 150, 150);
@@ -65,10 +61,12 @@ void run_sfml_visualizer(const std::vector<TrackSegment>& track, const CarSetup&
     CarState state;
     state.v = 10.0f;
     state.battery_mj = 4.0f;
-    state.dist_in_seg = 0.0f;
-    state.current_idx = 0;
+    state.current_seg = 0;
+    state.time_s = 0.0f;
     
-    float dt = 0.016f;
+    // (2ms per step)
+    float physics_dt = 0.002f; 
+    int steps_per_frame = 8; // 8 * 2ms = 16ms
 
     while (window.isOpen()) {
         sf::Event event;
@@ -76,44 +74,53 @@ void run_sfml_visualizer(const std::vector<TrackSegment>& track, const CarSetup&
             if (event.type == sf::Event::Closed) window.close();
         }
 
-        if (state.current_idx >= track.size() - 1) {
-            state.current_idx = 0;
-            state.dist_in_seg = 0.0f;
-            state.battery_mj = 4.0f;
+        for (int i = 0; i < steps_per_frame; ++i) {
+            if (state.current_seg >= track.size() - 1) {
+                state.current_seg = 0;
+                state.battery_mj = 4.0f; 
+                state.time_s = 0.0f;
+            }
+            
+            step_physics(&state, &setup, track.data(), track.size(), physics_dt);
         }
-        
-        step_physics(&state, &setup, track.data(), track.size(), dt);
 
         std::string action = state.is_braking ? "TRAVAR (Regen)" : "ACELERAR";
-
-        int next_idx = state.current_idx + 1;
-        float lerp_factor = state.dist_in_seg / track[state.current_idx].length_m;
         
-        float real_x = track[state.current_idx].x + (track[next_idx].x - track[state.current_idx].x) * lerp_factor;
-        float real_y = track[state.current_idx].y + (track[next_idx].y - track[state.current_idx].y) * lerp_factor;
-
-        float rot_x = real_x * cos_theta - real_y * sin_theta;
-        float rot_y = real_x * sin_theta + real_y * cos_theta;
-
-        float screen_x = offset_x + (rot_x - min_x) * scale;
-        float screen_y = offset_y + (max_y - rot_y) * scale;
+        int next_idx = (state.current_seg + 1) % track.size();
         
-        car.setPosition(screen_x, screen_y);
+        // this needs to be done to fix the car position lmao
+        float ax = track[state.current_seg].x;
+        float ay = track[state.current_seg].y;
+        float bx = track[next_idx].x;
+        float by = track[next_idx].y;
 
-        char buffer[200];
-        snprintf(buffer, sizeof(buffer), 
+        float seg_length = track[state.current_seg].length_m;
+        float dir_x = (bx - ax) / seg_length;
+        float dir_y = (by - ay) / seg_length;
+
+        float real_car_x = ax + (dir_x * state.current_m);
+        float real_car_y = ay + (dir_y * state.current_m);
+
+        float screen_car_x = offset_x + (real_car_x - min_x) * scale;
+        float screen_car_y = offset_y + (max_y - real_car_y) * scale;
+        
+        car.setPosition(screen_car_x, screen_car_y);
+
+        char buffer[256];
+        snprintf(buffer, sizeof(buffer),
             "TELEMETRIA EM TEMPO REAL\n"
+            "Tempo de Volta: %.3f s\n"
             "Velocidade: %.0f km/h\n"
             "Acao: %s\n"
             "Bateria MGU-K: %.2f MJ\n"
-            "Raio da Curva: %.0f m", 
-            state.v * 3.6f, action.c_str(), state.battery_mj, track[state.current_idx].radius_m);
+            "Raio da Curva: %.0f m",
+            state.time_s, state.v * 3.6f, action.c_str(), state.battery_mj, track[state.current_seg].radius_m);
         ui_text.setString(buffer);
 
-        window.clear(sf::Color(20, 20, 20)); 
-        window.draw(track_lines);            
-        window.draw(car);                    
-        window.draw(ui_text);                
-        window.display();                    
+        window.clear(sf::Color(20, 20, 20));
+        window.draw(track_lines);
+        window.draw(car);
+        window.draw(ui_text);
+        window.display();
     }
 }

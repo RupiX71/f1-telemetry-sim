@@ -1,53 +1,66 @@
 #include "physics.cuh"
+#include "config.cuh"
 #include <cuda_runtime.h>
 #include <math.h>
 #include <iostream>
 
-__host__ __device__ void step_physics(CarState* state, const CarSetup* setup, 
-                                      const TrackSegment* track, int num_segments, 
-                                      float dt) {
-    float air_density = 1.225f;
-    float frontal_area = 1.5f;
-    float mu = 1.6f;
-    float downforce_coef = setup->drag_coef * 3.0f;
+__host__ __device__ void step_physics(CarState* car, const CarSetup* setup, const TrackSegment* track, int num_segments, float dt) {
 
-    float drag_force = 0.5f * air_density * (state->v * state->v) * setup->drag_coef * frontal_area;
-    float downforce = 0.5f * air_density * (state->v * state->v) * downforce_coef * frontal_area;
-    float max_grip = (setup->mass_kg * 9.81f + downforce) * mu;
+    float drag_force = 0.5f * Config::AIR_DENSITY * (car->v * car->v) * setup->drag_coef * Config::FRONTAL_AREA;
+    float downforce = 0.5f * Config::AIR_DENSITY * (car->v * car->v) * (setup->drag_coef * 3.f) * Config::FRONTAL_AREA;
 
-    int cur = state->current_idx;
-    float max_v = sqrtf((max_grip * track[cur].radius_m) / setup->mass_kg);
-    
-    int lookahead = (cur + 15) % num_segments;
-    float next_max_v = sqrtf((max_grip * track[lookahead].radius_m) / setup->mass_kg);
+    float max_grip = (setup->mass_kg * Config::GRAVITY + downforce) * Config::BASE_MECH_GRIP;
 
+    float speed = sqrtf((max_grip * track[car->current_seg].radius_m) / setup->mass_kg);
+
+    float dist_to_curve = track[car->current_seg].length_m - car->current_m;
+
+    for (int i = 0 ; i <= Config::LOOKAHEAD_METERS ; ++i) {
+        int lookahead = (car->current_seg + i) % num_segments;
+
+        if (track[lookahead].radius_m < 10000.0f) {
+            float corner_grip = (setup->mass_kg * Config::GRAVITY) * Config::BASE_MECH_GRIP;
+            float corner_v = sqrtf((corner_grip * track[lookahead].radius_m) / setup->mass_kg);
+            float v_critical = sqrtf((corner_v * corner_v) + (2.0f * Config::DECEL_RATE * dist_to_curve));  // torricelli
+
+            if (v_critical < speed) {
+                speed = v_critical;
+            }
+        }
+        dist_to_curve += track[lookahead].length_m;
+    }
+
+    car->is_braking = false;
     float net_force = 0.0f;
-    state->is_braking = false;
-
-    if (state->v >= max_v || state->v >= next_max_v) {
-        net_force = -(setup->mass_kg * 9.81f * 5.0f) - drag_force;
-        state->is_braking = true;
-        if (state->battery_mj < 4.0f) state->battery_mj += (350.0f * dt) / 1000.0f; 
+    if (car->v > speed) {
+        car->is_braking = true;
+        net_force = -(setup->mass_kg * Config::DECEL_RATE) - drag_force; 
+        
+        if (car->battery_mj < Config::MAX_BATTERY_MJ) {
+            car->battery_mj += (Config::MGUK_REGEN_KW * dt) / 1000.0f;
+        }
     } else {
         float current_power_kw = setup->ice_power_kw;
-        if (state->battery_mj > 0.0f && state->v > 30.0f) {
+        if (car->battery_mj > 0.0f && car->v > 30.0f) {
             current_power_kw += setup->mguk_power_kw;
-            state->battery_mj -= (setup->mguk_power_kw * dt) / 1000.0f;
+            car->battery_mj -= (setup->mguk_power_kw * dt) / 1000.0f;
         }
-        float engine_force = (state->v > 1.0f) ? (current_power_kw * 1000.0f) / state->v : 15000.0f;
-        if (engine_force > max_grip) engine_force = max_grip;
-        net_force = engine_force - drag_force;
+        
+        float engine_force = (car->v > 1.0f) ? (current_power_kw * 1000.0f) / car->v : 15000.0f;
+        
+        if (engine_force > max_grip) engine_force = max_grip; 
+        
+        net_force = engine_force - drag_force; 
     }
 
     float a = net_force / setup->mass_kg;
-    state->v += a * dt;
-    if (state->v < 5.0f) state->v = 5.0f; 
+    car->v += a * dt;
+    car->current_m += car->v * dt;
+    car->time_s += dt;
 
-    state->dist_in_seg += state->v * dt;
-    while (state->dist_in_seg >= track[state->current_idx].length_m) {
-        state->dist_in_seg -= track[state->current_idx].length_m;
-        state->current_idx++;
-        if (state->current_idx >= num_segments) return; 
+    if (car->current_m >= track[car->current_seg].length_m) {
+        car->current_m -= track[car->current_seg].length_m;
+        car->current_seg++;
     }
 }
 
@@ -57,28 +70,29 @@ __global__ void simulate_lap(const CarSetup* setups, SimResult* results, int num
     
     if (idx < num_setups) {
         CarSetup setup = setups[idx];
-        
         CarState state;
-        state.v = 10.0f;          
-        state.battery_mj = 4.0f; 
-        state.dist_in_seg = 0.0f;
-        state.current_idx = 0;
+
+        // Starter states for each setup
+        state.v = 10.0f;
+        state.battery_mj = 4.0f;
+        state.current_seg = 0;
+        state.time_s = 0.0f;
         
         float t = 0.0f;
-        float dt = 0.016f;
-        float max_speed_reached = 0.0f;
+        float dt = 0.002f;
+        float max_speed = 0.0f;
         
-        while (state.current_idx < num_segments - 1) {
+        while (state.current_seg < num_segments - 1) {
             step_physics(&state, &setup, track, num_segments, dt);
             
-            if (state.v > max_speed_reached) max_speed_reached = state.v;
+            if (state.v > max_speed) max_speed = state.v;
             t += dt;
         }
         
         results[idx].setup_id = setup.id;
         results[idx].lap_time = t;
-        results[idx].top_speed_kmh = max_speed_reached * 3.6f; 
-        results[idx].battery_left_mj = state.battery_mj;
+        results[idx].top_speed_kmh = max_speed * 3.6f; 
+        results[idx].battery_used_mj = state.battery_mj;
     }
 }
 

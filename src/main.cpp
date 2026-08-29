@@ -3,34 +3,34 @@
 #include <random>
 #include <algorithm>
 #include "physics.cuh"
+#include "config.cuh"
 #include "circuit_loader.h"
 #include "visualizer.h"
 
 int main() {
-    std::string track_file = "../data/monza_pole.csv";
-    std::cout << "[CPU] Loading circuit from: " << track_file << std::endl;
 
-    std::vector<TrackSegment> track = load_circuit_csv(track_file);
+    const std::string TRACK_FILE = "../data/monza_pole.csv";
+    std::cout << "[CPU] Loading circuit from: " << TRACK_FILE << std::endl;
+
+    std::vector<TrackSegment> track = load_circuit_csv(TRACK_FILE);
 
     if (track.empty()) return -1;
 
     std::cout << "[CPU] Track loaded! Total segments: " << track.size() << std::endl;
-
-    int num_setups = 5000;
     
-    std::cout << "[CPU] Generating " << num_setups << " different setups..." << std::endl;
+    std::cout << "[CPU] Generating " << Config::NUM_SETUPS << " different setups..." << std::endl;
 
-    std::vector<CarSetup> setups(num_setups);
-    std::vector<SimResult> results(num_setups);
+    std::vector<CarSetup> setups(Config::NUM_SETUPS);
+    std::vector<SimResult> results(Config::NUM_SETUPS);
 
     std::mt19937 gen(888); 
     std::uniform_real_distribution<float> ice_dist(380.0f, 420.0f);
     std::uniform_real_distribution<float> mguk_dist(300.0f, 350.0f);
-    std::uniform_real_distribution<float> drag_dist(0.9f, 1.5f);
+    std::uniform_real_distribution<float> drag_dist(0.7f, 1.5f);
 
-    for(int i = 0 ; i < num_setups ; ++i) {
+    for(int i = 0 ; i < Config::NUM_SETUPS ; ++i) {
         setups[i].id = i;
-        setups[i].mass_kg = 805.0f; 
+        setups[i].mass_kg = 798.0f;
         setups[i].ice_power_kw = ice_dist(gen);
         setups[i].mguk_power_kw = mguk_dist(gen);
         setups[i].drag_coef = drag_dist(gen);
@@ -38,7 +38,7 @@ int main() {
 
     std::cout << "[CUDA] Sending Data to GPU..." << std::endl;
 
-    run_simulation_batch(setups.data(), results.data(), track.data(), track.size(), num_setups);
+    run_simulation_batch(setups.data(), results.data(), track.data(), track.size(), Config::NUM_SETUPS);
 
     std::cout << "[CPU] Success here are the results: \n\n";
 

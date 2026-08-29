@@ -13,7 +13,6 @@ std::vector<TrackSegment> load_circuit_csv(const std::string& filename) {
         return track;
     }
 
-    // First line is the header
     std::getline(file, line);
 
     while (std::getline(file, line)) {
@@ -33,6 +32,5 @@ std::vector<TrackSegment> load_circuit_csv(const std::string& filename) {
             track.push_back(seg);
         }
     }
-
     return track;
 }

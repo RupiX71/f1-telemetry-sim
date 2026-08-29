@@ -1,53 +1,86 @@
+import os
 import fastf1
 import numpy as np
 import pandas as pd
-import os
+from scipy.interpolate import pchip_interpolate
 
 print("Initializing FastF1...")
 
-if not os.path.exists('cache'):
-    os.makedirs("cache")
-fastf1.Cache.enable_cache('cache')  # Enable caching to speed up data retrieval
+if not os.path.exists("cache"):
+  os.makedirs("cache")
+fastf1.Cache.enable_cache("cache")
 
-# We will be using the 2025 Monza Grand Prix as the first example since it 
-# is the most straight race and has fewer corners, which makes it easier to analyze the energy usage of the cars.
-session = fastf1.get_session(2025, 'Monza', 'Q')  # Get the race session
-session.load(telemetry=True, weather=False, messages=False)  # Load telemetry data
+# Carrega a sessão de Monza 2025
+session = fastf1.get_session(2025, "Monza", "Q")
+session.load(telemetry=True, weather=False, messages=False)
 
-lap = session.laps.pick_fastest()  # Get the fastest lap of the session
-tel = lap.get_telemetry()  # Get the telemetry data for the fastest lap
-print(f"Telemetry data loaded successfully. {lap['Driver']} set the fastest lap with a time of {lap['LapTime']}.")
+lap = session.laps.pick_fastest()
+tel = lap.get_telemetry()
+print(
+    f"Telemetry loaded. {lap['Driver']} set the fastest lap: {lap['LapTime']}."
+)
+
+# --- 1. MELHORAR DEFINIÇÃO DOS SEGMENTOS (Interpolação Espacial) ---
+# Criamos uma nova grade de distância perfeita (ex: de 1 em 1 metro)
+distancia_original = tel["Distance"].to_numpy()
+total_distance = distancia_original[-1]
+# Segmentos fixos de 1 metro (mude para 0.5 ou 2 se quiser mais/menos pontos)
+distancia_uniforme = np.arange(0, total_distance, 1.0)
+
+# Interpolamos X, Y, Z com base na nova distância uniforme
+# Usamos 'pchip' (Piecewise Cubic Hermite Interpolating Polynomial) pois preserva melhor as curvas que a linear
+x_interp = pchip_interpolate(distancia_original, tel["X"].to_numpy(), distancia_uniforme)
+y_interp = pchip_interpolate(distancia_original, tel["Y"].to_numpy(), distancia_uniforme)
+z_interp = pchip_interpolate(distancia_original, tel["Z"].to_numpy(), distancia_uniforme)
 
 df = pd.DataFrame({
-    'Distance': tel['Distance'], # Distance covered in meters
-    'X': tel['X'], # X coordinate of the car on the track
-    'Y': tel['Y'], # Y coordinate of the car on the track
-    'Z': tel['Z'], # Z coordinate of the car on the track
+    "Distance": distancia_uniforme,
+    "X": x_interp,
+    "Y": y_interp,
+    "Z": z_interp,
 })
 
-# Get the radius of the corners using the X and Y coordinates of the car on the track
-dx = np.gradient(df['X'])
-dy = np.gradient(df['Y'])
+# --- 2. ROTAÇÃO OFICIAL PERFEITA ---
+circuit_info = session.get_circuit_info()
+# Converte o ângulo oficial de graus para radianos (e inverte o sinal para alinhar com o padrão matemático)
+angle_rad = -circuit_info.rotation / 180 * np.pi
+
+cos_theta = np.cos(angle_rad)
+sin_theta = np.sin(angle_rad)
+
+# Aplicação da rotação correta
+x_rot = df["X"] * cos_theta - df["Y"] * sin_theta
+y_rot = df["X"] * sin_theta + df["Y"] * cos_theta
+
+df["X"] = x_rot
+df["Y"] = y_rot
+
+# --- 3. CÁLCULO DO RAIO DE CURVATURA ---
+# Como a distância agora é constante (1m), o gradient fica muito mais preciso
+dx = np.gradient(df["X"])
+dy = np.gradient(df["Y"])
 ddx = np.gradient(dx)
 ddy = np.gradient(dy)
 
-denominator = (dx**2 + dy**2)**(1.5) + 1e-8 # Add a small value to avoid division by zero
-
+denominator = (dx**2 + dy**2) ** 1.5 + 1e-8
 curvature = np.abs(dx * ddy - dy * ddx) / denominator
 
-# Radius of curvature is the inverse of curvature, 
-# but we will set a maximum value of 10000 for straight lines (curvature close to zero)
-df['Radius'] = np.where(curvature > 0.001, 1/ curvature, 10000)
+# Define raio máximo para retas
+df["Radius"] = np.where(curvature > 1e-3, 1 / curvature, 10000)
 
-# Smoothing
-df['Radius'] = df['Radius'].rolling(window=3, min_periods=1, center=True).mean()
+# Suavização leve no raio para evitar picos abruptos em mudanças de direção
+df["Radius"] = (
+    df["Radius"].rolling(window=5, min_periods=1, center=True).mean()
+)
 
-df['Segment_Length'] = df['Distance'].diff().fillna(df['Distance'].iloc[0])
+# Tamanho do segmento (agora será sempre ~1.0 devido à interpolação)
+df["Segment_Length"] = df["Distance"].diff().fillna(df["Distance"].iloc[0])
 
-if not os.path.exists('../data'):
-    os.makedirs('../data')
+# --- 4. EXPORTAÇÃO ---
+if not os.path.exists("../data"):
+  os.makedirs("../data")
 
-output_path = '../data/monza_pole.csv'
-df[['Segment_Length', 'Radius', 'X', 'Y']].to_csv(output_path, index=False)
+output_path = "../data/monza_pole.csv"
+df[["Segment_Length", "Radius", "X", "Y"]].to_csv(output_path, index=False)
 
 print(f"Success! Exported {len(df)} segments to {output_path}")
