@@ -1,8 +1,9 @@
 cmake_minimum_required(VERSION 3.18)
 
-set(CMAKE_CUDA_COMPILER "/usr/local/cuda-13.2/bin/nvcc")
-
 set(CMAKE_CUDA_ARCHITECTURES 75)
+
+set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -O3 -arch=sm_75 --use_fast_math")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3")
 
 project(F1HybridSolver LANGUAGES CXX CUDA)
 

@@ -16,14 +16,26 @@ struct CarSetup {
     float drag_coef;                    // Aerodynamic Coefficient
 };
 
+enum class DriverAction {
+    ACCELERATE,
+    BRAKE,
+    COAST
+};
+
 // Keeps the state of the car every dt
-struct CarState {
+struct F1Car {
     float v;                            // Velocity of the car
     int current_seg;                    // Position of the car (segment of the circuit)
     float current_m;                    // Current meter of the circuit
     float battery_mj;                   // Ammount of battery
-    bool is_braking;                    // braking
     float time_s;                       // Time on track (resets after going through finish line)
+
+    DriverAction action;                 // Current driver action
+
+    float throttle_pedal;                // Throttle pedal position (0.0 to 1.0)
+    float brake_pedal;                   // Brake pedal position (0.0 to 1.0)
+
+    bool qualifying_mode;
 };
 
 // track segment
@@ -42,7 +54,7 @@ struct SimResult {
     float battery_used_mj;              // Ammount of Battery Used in MJ (starting + what is regenerated)
 };
 
-CUDA_CALLABLE void step_physics(CarState* state, const CarSetup* setup, const TrackSegment* track, int num_segments, float dt);
+CUDA_CALLABLE void step_physics(F1Car* car, const CarSetup* setup, const TrackSegment* track, int num_segments, float dt);
 
 // This will start the kernel
 void run_simulation_batch(const CarSetup* setups, SimResult* results, const TrackSegment* track, int num_segments, int numSetups);

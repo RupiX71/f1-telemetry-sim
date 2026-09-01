@@ -14,7 +14,7 @@ namespace Config {
     constexpr float GRAVITY = 9.81f;
 
     // Car Limits
-    constexpr float DECEL_RATE = 40.0f; // this one should be variable no?
+    constexpr float DECEL_RATE = 49.0f; // this one should be variable no?
     constexpr float BASE_MECH_GRIP = 1.6f;
     constexpr float ICE_MIN_FORCE = 15000.f;
 
@@ -25,7 +25,7 @@ namespace Config {
     // Simulation Parameters
     constexpr int LOOKAHEAD_METERS = 300;
     constexpr float PHYSICS_DT = 0.002f;
-    constexpr int NUM_SETUPS = 5000;
+    constexpr int NUM_SETUPS = 1000;
 }
 
 #endif
