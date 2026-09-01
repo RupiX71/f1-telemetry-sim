@@ -11,7 +11,7 @@ if not os.path.exists("cache"):
 fastf1.Cache.enable_cache("cache")
 
 # Carrega a sessão de Monza 2025
-session = fastf1.get_session(2025, "Monza", "Q")
+session = fastf1.get_session(2026, "Australia", "Q")
 session.load(telemetry=True, weather=False, messages=False)
 
 lap = session.laps.pick_fastest()
@@ -32,12 +32,14 @@ distancia_uniforme = np.arange(0, total_distance, 1.0)
 x_interp = pchip_interpolate(distancia_original, tel["X"].to_numpy(), distancia_uniforme)
 y_interp = pchip_interpolate(distancia_original, tel["Y"].to_numpy(), distancia_uniforme)
 z_interp = pchip_interpolate(distancia_original, tel["Z"].to_numpy(), distancia_uniforme)
+speed_interp = pchip_interpolate(distancia_original, tel["Speed"].to_numpy(), distancia_uniforme)
 
 df = pd.DataFrame({
     "Distance": distancia_uniforme,
     "X": x_interp,
     "Y": y_interp,
     "Z": z_interp,
+    "Real Speed": speed_interp
 })
 
 # --- 2. ROTAÇÃO OFICIAL PERFEITA ---
@@ -80,7 +82,7 @@ df["Segment_Length"] = df["Distance"].diff().fillna(df["Distance"].iloc[0])
 if not os.path.exists("../data"):
   os.makedirs("../data")
 
-output_path = "../data/monza_pole.csv"
-df[["Segment_Length", "Radius", "X", "Y"]].to_csv(output_path, index=False)
+output_path = "../data/australia_pole.csv"
+df[["Segment_Length", "Radius", "X", "Y", "Real Speed"]].to_csv(output_path, index=False)
 
 print(f"Success! Exported {len(df)} segments to {output_path}")

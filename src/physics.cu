@@ -24,6 +24,7 @@ __host__ __device__ void step_physics(F1Car* car, const CarSetup* setup, const T
             
             float corner_v_sq = base_corner_accel * track[lookahead].radius_m;
             
+            // v_critical should be less than what it is rn
             float v_critical = sqrtf(corner_v_sq + (2.0f * Config::DECEL_RATE * dist_to_curve));
             
             if (v_critical < speed) {
@@ -118,11 +119,11 @@ __global__ void simulate_lap(const CarSetup* setups, SimResult* results, int num
         F1Car car;
 
         // Starter states for each setup
-        car.v = 12.0f;
+        car.v = track[0].real_speed_kmh / 3.6f;
         car.battery_mj = 4.0f;
         car.current_seg = 0;
         car.time_s = 0.0f;
-        car.qualifying_mode = true; // Assuming qualifying mode is true for all setups initially
+        car.qualifying_mode = false; // Assuming qualifying mode is true for all setups initially
         
         float t = 0.0f;
         float dt = 0.002f;

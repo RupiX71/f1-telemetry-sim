@@ -65,7 +65,7 @@ void run_sfml_visualizer(const std::vector<TrackSegment>& track, const CarSetup&
     ui_text.setPosition(1000, 20);
 
     F1Car car;
-    car.v = 0.0f;
+    car.v = track[0].real_speed_kmh / 3.6f;
     car.battery_mj = 4.0f;
     car.current_seg = 0;
     car.time_s = 0.0f;
@@ -160,9 +160,16 @@ void run_sfml_visualizer(const std::vector<TrackSegment>& track, const CarSetup&
 
         car_shape.setPosition(screen_car_x, screen_car_y);
         char buffer[512];
+
+        float sim_speed_kmh = car.v * 3.6f;
+        float real_speed_kmh = track[car.current_seg].real_speed_kmh;
+        float delta_speed = sim_speed_kmh - real_speed_kmh;
+
         snprintf(buffer, sizeof(buffer),
             "TELEMETRIA EM TEMPO REAL\n"
-            "Velocidade: %.0f km/h\n"
+            "Velocidade Simulada: %.2f km/h\n"
+            "Velocidade Real: %.2f km/h\n"
+            "Delta Velocidade: %.2f km/h\n"
             "Acao: %s\n" // how do i put the throttle and braking percentage here
             "Bateria MGU-K: %.2f MJ\n"
             "Raio da Curva: %.0f m\n"
@@ -171,8 +178,8 @@ void run_sfml_visualizer(const std::vector<TrackSegment>& track, const CarSetup&
             "Setor 2: %.3f s\n"
             "Setor 3: %.3f s\n"
             "Lap Time: %.3f s\n"
-            "Last Lap Time: %.3f s",
-            car.v * 3.6f, action.c_str(), car.battery_mj, track[car.current_seg].radius_m,
+            "Last Lap Time: %.3f s\n",
+            sim_speed_kmh, real_speed_kmh, delta_speed, action.c_str(), car.battery_mj, track[car.current_seg].radius_m,
             time_s1, time_s2, time_s3, car.time_s, last_lap_time);
         ui_text.setString(buffer);
 

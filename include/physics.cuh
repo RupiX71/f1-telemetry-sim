@@ -44,6 +44,7 @@ struct TrackSegment {
     float radius_m;                     // Radius of the segment (< 10000 means curvature)
     float x;                            // x of segment
     float y;                            // y of segment
+    float real_speed_kmh;               // Real speed of the segment
 };
 
 // Results
