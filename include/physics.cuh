@@ -35,7 +35,11 @@ struct F1Car {
     float throttle_pedal;                // Throttle pedal position (0.0 to 1.0)
     float brake_pedal;                   // Brake pedal position (0.0 to 1.0)
 
-    bool qualifying_mode;
+    bool qualifying_mode;               // this is just cool to add for now but it states if its in qualifying mode or not, if it is then the car will not regenerate energy and will use more power to simulate a qualifying lap
+
+    // Transmission
+    int current_gear;
+    float rpm;
 };
 
 // track segment
@@ -45,6 +49,8 @@ struct TrackSegment {
     float x;                            // x of segment
     float y;                            // y of segment
     float real_speed_kmh;               // Real speed of the segment
+    float real_rpm;
+    float real_gear;
 };
 
 // Results

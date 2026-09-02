@@ -11,7 +11,7 @@ if not os.path.exists("cache"):
 fastf1.Cache.enable_cache("cache")
 
 # Carrega a sessão de Monza 2025
-session = fastf1.get_session(2026, "Australia", "Q")
+session = fastf1.get_session(2025, "Monza", "Q")
 session.load(telemetry=True, weather=False, messages=False)
 
 lap = session.laps.pick_fastest()
@@ -33,16 +33,21 @@ x_interp = pchip_interpolate(distancia_original, tel["X"].to_numpy(), distancia_
 y_interp = pchip_interpolate(distancia_original, tel["Y"].to_numpy(), distancia_uniforme)
 z_interp = pchip_interpolate(distancia_original, tel["Z"].to_numpy(), distancia_uniforme)
 speed_interp = pchip_interpolate(distancia_original, tel["Speed"].to_numpy(), distancia_uniforme)
+rpm_interp = pchip_interpolate(distancia_original, tel["RPM"].to_numpy(), distancia_uniforme)
+# nGear goes from 1 to 8, so we can round the interpolated values to the nearest integer
+gear_interp = np.round(pchip_interpolate(distancia_original, tel["nGear"].to_numpy(), distancia_uniforme)).astype(int)
 
 df = pd.DataFrame({
     "Distance": distancia_uniforme,
     "X": x_interp,
     "Y": y_interp,
     "Z": z_interp,
-    "Real Speed": speed_interp
+    "Real Speed": speed_interp,
+    "RPM": rpm_interp,
+    "nGear": gear_interp
 })
 
-# --- 2. ROTAÇÃO OFICIAL PERFEITA ---
+# --- 2. ROTAÇÃO ---
 circuit_info = session.get_circuit_info()
 # Converte o ângulo oficial de graus para radianos (e inverte o sinal para alinhar com o padrão matemático)
 angle_rad = -circuit_info.rotation / 180 * np.pi
@@ -82,7 +87,7 @@ df["Segment_Length"] = df["Distance"].diff().fillna(df["Distance"].iloc[0])
 if not os.path.exists("../data"):
   os.makedirs("../data")
 
-output_path = "../data/australia_pole.csv"
-df[["Segment_Length", "Radius", "X", "Y", "Real Speed"]].to_csv(output_path, index=False)
+output_path = "../data/monza_pole.csv"
+df[["Segment_Length", "Radius", "X", "Y", "Real Speed", "RPM", "nGear"]].to_csv(output_path, index=False)
 
 print(f"Success! Exported {len(df)} segments to {output_path}")

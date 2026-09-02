@@ -44,6 +44,20 @@ __host__ __device__ void step_physics(F1Car* car, const CarSetup* setup, const T
         car->action = DriverAction::ACCELERATE;
     }
 
+    // gearbox logic: (v / wheel_Radius) * gear_ratio * final_ratio * (60 / 2*PI) = RPM
+    float wheel_omega = car->v / Config::WHEEL_RADIUS;
+    car->rpm = wheel_omega * Config::get_gear_ratio(car->current_gear - 1) * Config::FINAL_DRIVE * 9.5492f; // 9.5492 is the conversion factor from rad/s to RPM
+
+    if (car->rpm > Config::RPM_UPSHIFT && car->current_gear < 8) {
+        car->current_gear++;
+        car->rpm = wheel_omega * Config::get_gear_ratio(car->current_gear) * Config::FINAL_DRIVE * 9.5492f;
+    } else if (car->rpm < Config::RPM_DOWNSHIFT && car->current_gear > 1) {
+        car->current_gear--;
+        car->rpm = wheel_omega * Config::get_gear_ratio(car->current_gear) * Config::FINAL_DRIVE * 9.5492f;
+    } else {
+        car->rpm = wheel_omega * Config::get_gear_ratio(car->current_gear) * Config::FINAL_DRIVE * 9.5492f;
+    }
+
     // Kamm Circle: Lateral Force: F * v² / R
     float lateral_force = (setup->mass_kg * car->v * car->v) / track[car->current_seg].radius_m;
 
@@ -61,8 +75,10 @@ __host__ __device__ void step_physics(F1Car* car, const CarSetup* setup, const T
 
     switch (car->action) {
         case DriverAction::BRAKE: {
+            float engine_braking = (car->rpm / Config::RPM_REDLINE) * 1500.0f;
             float desired_braking_force = setup->mass_kg * Config::DECEL_RATE;
             float actual_braking_force = (desired_braking_force > long_grip) ? long_grip : desired_braking_force;
+            actual_braking_force += engine_braking;
 
             car->brake_pedal = actual_braking_force / desired_braking_force;
 
@@ -73,18 +89,25 @@ __host__ __device__ void step_physics(F1Car* car, const CarSetup* setup, const T
             break;
         }
         case DriverAction::COAST: {
-            net_force = -drag_force;
+            float engine_braking = (car->rpm / Config::RPM_REDLINE) * 1500.0f;
+            net_force = -drag_force - engine_braking;
             if (car->battery_mj < Config::MAX_BATTERY_MJ) {
                 car->battery_mj += (Config::MGUK_REGEN_KW * dt) / 1000.0f;
             }
             break;
         }
         case DriverAction::ACCELERATE: {
-            float current_power_kw = setup->ice_power_kw;
+            // Calculate the current power output based on RPM
+            float rpm_diff = (car->rpm - Config::PEAK_POWER_RPM) / 4000.0f;
+            float rpm_factor = 1.0f - (rpm_diff * rpm_diff);
+            if (rpm_factor < 0.2f) rpm_factor = 0.2f;
+            float current_power_kw = setup->ice_power_kw * rpm_factor;
+            // This part needs a battery management system more refined
             if (car->battery_mj > 0.0f && car->v > 60.0f && !(track[car->current_seg].radius_m < 10000.0f)) {
                 current_power_kw += setup->mguk_power_kw;
                 car->battery_mj -= (setup->mguk_power_kw * dt) / 1000.0f;
             }
+
             float desired_engine_force = (car->v > 1.0f) ? (current_power_kw * 1000.0f) / car->v : 15000.0f;
             
             float actual_engine_force = (desired_engine_force > long_grip) ? long_grip : desired_engine_force;
@@ -100,11 +123,7 @@ __host__ __device__ void step_physics(F1Car* car, const CarSetup* setup, const T
     car->current_m += car->v * dt;
     car->time_s += dt;
 
-    if (car->current_m >= track[car->current_seg].length_m) {
-        car->current_m -= track[car->current_seg].length_m;
-        car->current_seg++;
-    }
-    while (car->current_m >= track[car->current_seg].length_m) {
+    while (car->current_seg < num_segments && car->current_m >= track[car->current_seg].length_m) {
         car->current_m -= track[car->current_seg].length_m;
         car->current_seg++;
     }
@@ -121,15 +140,19 @@ __global__ void simulate_lap(const CarSetup* setups, SimResult* results, int num
         // Starter states for each setup
         car.v = track[0].real_speed_kmh / 3.6f;
         car.battery_mj = 4.0f;
+        car.rpm = track[0].real_rpm;
+        car.current_gear = track[0].real_gear;
         car.current_seg = 0;
         car.time_s = 0.0f;
-        car.qualifying_mode = false; // Assuming qualifying mode is true for all setups initially
+        car.qualifying_mode = true; // Assuming qualifying mode is true for all setups initially
+        car.throttle_pedal = 0.0f;
+        car.brake_pedal = 0.0f;
         
         float t = 0.0f;
         float dt = 0.002f;
         float max_speed = 0.0f;
         
-        while (car.current_seg < num_segments - 1) {
+        while (car.current_seg < num_segments && car.time_s < 300.f) {
             step_physics(&car, &setup, track, num_segments, dt);
             
             if (car.v > max_speed) max_speed = car.v;
@@ -137,7 +160,7 @@ __global__ void simulate_lap(const CarSetup* setups, SimResult* results, int num
         }
         
         results[idx].setup_id = setup.id;
-        results[idx].lap_time = t;
+        results[idx].lap_time = car.time_s;
         results[idx].top_speed_kmh = max_speed * 3.6f; 
         results[idx].battery_used_mj = car.battery_mj;
     }

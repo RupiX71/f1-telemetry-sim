@@ -5,6 +5,47 @@
 #include <algorithm>
 #include <math.h>
 
+void update_draw_hud(sf::RenderWindow& window, sf::Text& txt_telemetry, sf::Text& txt_timings,
+                     const F1Car& car, float real_speed_kmh, float s1, float s2, float s3, float last_lap_time) {
+
+    std::string action_str;
+    switch(car.action) {
+        case DriverAction::BRAKE: action_str = "Brakes(" + std::to_string(static_cast<int>(car.brake_pedal * 100)) + "%)"; break;
+        case DriverAction::COAST: action_str = "Lift"; break;
+        case DriverAction::ACCELERATE: action_str = "Throttle(" + std::to_string(static_cast<int>(car.throttle_pedal * 100)) + "%)"; break;
+    }
+
+    float sim_speed_kmh = car.v * 3.6f;
+    float delta_kmh = sim_speed_kmh - real_speed_kmh;
+
+    char buf_tel[256];
+    snprintf(buf_tel, sizeof(buf_tel),
+        "\tEngine and Dynamics\t\n"
+        "Sim: %.2f km/h\n"
+        "Real: %.2f km/h\n"
+        "Delta: %+.2f km/h\n"
+        "Action: %s\n"
+        "MGU-K: %.2f MJ\n"
+        " ----------------\n"
+        "Gear: %d | RPM: %.0f\n",
+        sim_speed_kmh, real_speed_kmh, delta_kmh, action_str.c_str(), car.battery_mj, car.current_gear, car.rpm);
+    txt_telemetry.setString(buf_tel);
+
+    char buf_timing[256];
+    snprintf(buf_timing, sizeof(buf_timing),
+        "\tTimings\t\n"
+        "S1: %.3f\n"
+        "S2: %.3f\n"
+        "S3: %.3f\n"
+        "Lap Time: %.3f\n"
+        "Last Lap: %.3f",
+        s1, s2, s3, car.time_s, last_lap_time);
+    txt_timings.setString(buf_timing);
+
+    window.draw(txt_telemetry);
+    window.draw(txt_timings);
+}
+
 // all of this code should get divided lmao this way to crazy
 void run_sfml_visualizer(const std::vector<TrackSegment>& track, const CarSetup& setup) {
 
@@ -58,17 +99,27 @@ void run_sfml_visualizer(const std::vector<TrackSegment>& track, const CarSetup&
 
     sf::Font font;
     if (!font.loadFromFile("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")) {
-        std::cerr << "[ERROR] Font not found!\n";
+        std::cerr << "[SFML] Font not found!" << std::endl;
+        return;
     }
-    sf::Text ui_text("", font, 14);
-    ui_text.setFillColor(sf::Color::White);
-    ui_text.setPosition(1000, 20);
+    sf::Text text_telemetry("", font, 18);
+    text_telemetry.setFillColor(sf::Color::White);
+    text_telemetry.setPosition(20, 20);
+
+    sf::Text text_timings("", font, 18);
+    text_timings.setFillColor(sf::Color::White);
+    text_timings.setPosition(1100, 20);
 
     F1Car car;
     car.v = track[0].real_speed_kmh / 3.6f;
     car.battery_mj = 4.0f;
+    car.current_gear = track[0].real_gear;
+    car.rpm = track[0].real_rpm;
     car.current_seg = 0;
     car.time_s = 0.0f;
+    car.qualifying_mode = true;
+    car.throttle_pedal = 0.0f;
+    car.brake_pedal = 0.0f;
     
     // (2ms per step)
     float physics_dt = 0.002f; 
@@ -122,14 +173,6 @@ void run_sfml_visualizer(const std::vector<TrackSegment>& track, const CarSetup&
             }
         }
 
-        std::string action = (car.action == DriverAction::ACCELERATE) ? "Throttle" :
-                            (car.action == DriverAction::BRAKE) ? "Brakes" : "Coast";
-        
-        if (car.action == DriverAction::ACCELERATE) {
-            action += " (Throttle: " + std::to_string(static_cast<int>(car.throttle_pedal * 100)) + "%)";
-        } else if (car.action == DriverAction::BRAKE) {
-            action += " (Brakes: " + std::to_string(static_cast<int>(car.brake_pedal * 100)) + "%)";
-        }
         int next_idx = (car.current_seg + 1) % track.size();
         
         // this needs to be done to fix the car position lmao
@@ -165,25 +208,9 @@ void run_sfml_visualizer(const std::vector<TrackSegment>& track, const CarSetup&
         float real_speed_kmh = track[car.current_seg].real_speed_kmh;
         float delta_speed = sim_speed_kmh - real_speed_kmh;
 
-        snprintf(buffer, sizeof(buffer),
-            "TELEMETRIA EM TEMPO REAL\n"
-            "Velocidade Simulada: %.2f km/h\n"
-            "Velocidade Real: %.2f km/h\n"
-            "Delta Velocidade: %.2f km/h\n"
-            "Acao: %s\n" // how do i put the throttle and braking percentage here
-            "Bateria MGU-K: %.2f MJ\n"
-            "Raio da Curva: %.0f m\n"
-            "--- CRONOMETRAGEM ---\n"
-            "Setor 1: %.3f s\n"
-            "Setor 2: %.3f s\n"
-            "Setor 3: %.3f s\n"
-            "Lap Time: %.3f s\n"
-            "Last Lap Time: %.3f s\n",
-            sim_speed_kmh, real_speed_kmh, delta_speed, action.c_str(), car.battery_mj, track[car.current_seg].radius_m,
-            time_s1, time_s2, time_s3, car.time_s, last_lap_time);
-        ui_text.setString(buffer);
 
         window.clear(sf::Color(20, 20, 20));
+
         window.draw(track_lines);
 
         for (const auto& dot : telemetry_trail) {
@@ -191,7 +218,9 @@ void run_sfml_visualizer(const std::vector<TrackSegment>& track, const CarSetup&
         }
 
         window.draw(car_shape);
-        window.draw(ui_text);
+
+        update_draw_hud(window, text_telemetry, text_timings, car, real_speed_kmh, time_s1, time_s2, time_s3, last_lap_time);
+
         window.display();
     }
 }
