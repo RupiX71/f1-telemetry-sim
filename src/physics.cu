@@ -4,11 +4,12 @@
 #include <math.h>
 #include <iostream>
 
-__host__ __device__ void step_physics(F1Car* car, const CarSetup* setup, const TrackSegment* track, int num_segments, float dt) {
-
-    float drag_force = 0.5f * Config::AIR_DENSITY * (car->v * car->v) * setup->drag_coef * Config::FRONTAL_AREA;
+// We will be dividing the step_physics funtion into separate functions for better readability and maintainability
+// get_allowed_speed(const F1Car* car, const CarSetup* setup, const TrackSegment* track, int num_segments)
+// update_transmission(F1Car* car)
+// apply_pedals_force(F1Car* car, const CarSetup* setup, const TrackSegment* track, float dt)
+__host__ __device__ float get_allowed_speed(const F1Car* car, const CarSetup* setup, const TrackSegment* track, int num_segments) {
     float downforce = 0.5f * Config::AIR_DENSITY * (car->v * car->v) * (setup->drag_coef * 3.f) * Config::FRONTAL_AREA;
-
     float max_grip = (setup->mass_kg * Config::GRAVITY + downforce) * Config::BASE_MECH_GRIP;
 
     float speed = sqrtf((max_grip * track[car->current_seg].radius_m) / setup->mass_kg);
@@ -21,10 +22,8 @@ __host__ __device__ void step_physics(F1Car* car, const CarSetup* setup, const T
         int lookahead = (car->current_seg + i) % num_segments;
         
         if (track[lookahead].radius_m < 10000.0f) {
-            
+            // including downforce logic at the corner will give us a more perfect approach the corner
             float corner_v_sq = base_corner_accel * track[lookahead].radius_m;
-            
-            // v_critical should be less than what it is rn
             float v_critical = sqrtf(corner_v_sq + (2.0f * Config::DECEL_RATE * dist_to_curve));
             
             if (v_critical < speed) {
@@ -33,20 +32,13 @@ __host__ __device__ void step_physics(F1Car* car, const CarSetup* setup, const T
         }
         dist_to_curve += track[lookahead].length_m; 
     }
+    return speed;
+}
 
-    float lift_threshold_speed = speed - 10.0f;
-
-    if (car->v > speed) {
-        car->action = DriverAction::BRAKE;
-    } else if (car->v > lift_threshold_speed && car->qualifying_mode == false) {
-        car->action = DriverAction::COAST;
-    } else if (car->v < speed) {
-        car->action = DriverAction::ACCELERATE;
-    }
-
-    // gearbox logic: (v / wheel_Radius) * gear_ratio * final_ratio * (60 / 2*PI) = RPM
+// gearbox logic: (v / wheel_Radius) * gear_ratio * final_ratio * (60 / 2*PI) = RPM
+__host__ __device__ void update_transmission(F1Car* car) {
     float wheel_omega = car->v / Config::WHEEL_RADIUS;
-    car->rpm = wheel_omega * Config::get_gear_ratio(car->current_gear - 1) * Config::FINAL_DRIVE * 9.5492f; // 9.5492 is the conversion factor from rad/s to RPM
+    car->rpm = wheel_omega * Config::get_gear_ratio(car->current_gear) * Config::FINAL_DRIVE * 9.5492f; // 9.5492 is the conversion factor from rad/s to RPM
 
     if (car->rpm > Config::RPM_UPSHIFT && car->current_gear < 8) {
         car->current_gear++;
@@ -54,13 +46,16 @@ __host__ __device__ void step_physics(F1Car* car, const CarSetup* setup, const T
     } else if (car->rpm < Config::RPM_DOWNSHIFT && car->current_gear > 1) {
         car->current_gear--;
         car->rpm = wheel_omega * Config::get_gear_ratio(car->current_gear) * Config::FINAL_DRIVE * 9.5492f;
-    } else {
-        car->rpm = wheel_omega * Config::get_gear_ratio(car->current_gear) * Config::FINAL_DRIVE * 9.5492f;
     }
+}
+
+__host__ __device__ float apply_pedals_and_forces(F1Car* car, const CarSetup* setup, const TrackSegment* track, float dt) {
+    float drag_force = 0.5f * Config::AIR_DENSITY * (car->v * car->v) * setup->drag_coef * Config::FRONTAL_AREA;
+    float downforce = 0.5f * Config::AIR_DENSITY * (car->v * car->v) * (setup->drag_coef * 3.f) * Config::FRONTAL_AREA;
+    float max_grip = (setup->mass_kg * Config::GRAVITY + downforce) * Config::BASE_MECH_GRIP;
 
     // Kamm Circle: Lateral Force: F * v² / R
     float lateral_force = (setup->mass_kg * car->v * car->v) / track[car->current_seg].radius_m;
-
     // pythagorean theorem: sqrt(F² + L²) = max_grip
     float long_grip = 0.0f;
     if (max_grip > lateral_force) {
@@ -69,12 +64,11 @@ __host__ __device__ void step_physics(F1Car* car, const CarSetup* setup, const T
 
     car->throttle_pedal = 0.0f;
     car->brake_pedal = 0.0f;
-
     float net_force = 0.0f;
-
 
     switch (car->action) {
         case DriverAction::BRAKE: {
+            car->throttle_pedal = 0.0f;
             float engine_braking = (car->rpm / Config::RPM_REDLINE) * 1500.0f;
             float desired_braking_force = setup->mass_kg * Config::DECEL_RATE;
             float actual_braking_force = (desired_braking_force > long_grip) ? long_grip : desired_braking_force;
@@ -89,6 +83,8 @@ __host__ __device__ void step_physics(F1Car* car, const CarSetup* setup, const T
             break;
         }
         case DriverAction::COAST: {
+            car->throttle_pedal = 0.0f;
+            car->brake_pedal = 0.0f;
             float engine_braking = (car->rpm / Config::RPM_REDLINE) * 1500.0f;
             net_force = -drag_force - engine_braking;
             if (car->battery_mj < Config::MAX_BATTERY_MJ) {
@@ -97,6 +93,7 @@ __host__ __device__ void step_physics(F1Car* car, const CarSetup* setup, const T
             break;
         }
         case DriverAction::ACCELERATE: {
+            car->brake_pedal = 0.0f;
             // Calculate the current power output based on RPM
             float rpm_diff = (car->rpm - Config::PEAK_POWER_RPM) / 4000.0f;
             float rpm_factor = 1.0f - (rpm_diff * rpm_diff);
@@ -107,19 +104,57 @@ __host__ __device__ void step_physics(F1Car* car, const CarSetup* setup, const T
                 current_power_kw += setup->mguk_power_kw;
                 car->battery_mj -= (setup->mguk_power_kw * dt) / 1000.0f;
             }
+            float safe_rpm = car->rpm;
+            if (safe_rpm < 4000.0f) safe_rpm = 4000.0f;
+            // TORQUE mechanics Prevents the division-by-zero or division-by-one stability issues at low speeds
+            float engine_omega = (safe_rpm * 2.0f * 3.14159265f) / 60.f;
+            float engine_torque = (current_power_kw * 1000.f) / engine_omega;
 
-            float desired_engine_force = (car->v > 1.0f) ? (current_power_kw * 1000.0f) / car->v : 15000.0f;
-            
+            // Translate engine torque down to the contact patch of the tyre
+            float wheel_torque = engine_torque * Config::get_gear_ratio(car->current_gear) * Config::FINAL_DRIVE;
+            float desired_engine_force = wheel_torque / Config::WHEEL_RADIUS;
+
+            // if radius is to big in this case > 5000.f the lateral ratio stays at 0
+            float lateral_ratio = 0.0f;
+            if (track[car->current_seg].radius_m < 5000.0f) {
+                lateral_ratio = lateral_force / max_grip;
+            }
+
+            float throttle_allowed = 1.0f - lateral_ratio;
+            if (throttle_allowed > 1.0f) throttle_allowed = 1.0f;
+            if (throttle_allowed < 0.0f) throttle_allowed = 0.0f;
+
+
             float actual_engine_force = (desired_engine_force > long_grip) ? long_grip : desired_engine_force;
-            car->throttle_pedal = actual_engine_force / desired_engine_force;
-        
-            net_force = actual_engine_force - drag_force;
+            float ideal_pedal = actual_engine_force / desired_engine_force;
+
+            car->throttle_pedal = (ideal_pedal > throttle_allowed) ? throttle_allowed : ideal_pedal;
+
+            net_force = (car->throttle_pedal * actual_engine_force) - drag_force;
             break;
         }
     }
+    return net_force;
+}
+
+// uses all of the above
+__host__ __device__ void step_physics(F1Car* car, const CarSetup* setup, const TrackSegment* track, int num_segments, float dt) {
+
+    float speed = get_allowed_speed(car, setup, track, num_segments);
+    float lift_threshold_speed = speed - 10.0f;
+    if (car->v > speed) {
+        car->action = DriverAction::BRAKE;
+    } else if (car->v > lift_threshold_speed && !car->qualifying_mode) {
+        car->action = DriverAction::COAST;
+    } else if (car->v < lift_threshold_speed){ 
+        car->action = DriverAction::ACCELERATE;
+    }
+
+    float net_force = apply_pedals_and_forces(car, setup, track, dt);
 
     float a = net_force / setup->mass_kg;
     car->v += a * dt;
+    if (car->v < 0.0f) car->v = 0.0f; // Prevent reverse tracking bugs
     car->current_m += car->v * dt;
     car->time_s += dt;
 
@@ -127,6 +162,7 @@ __host__ __device__ void step_physics(F1Car* car, const CarSetup* setup, const T
         car->current_m -= track[car->current_seg].length_m;
         car->current_seg++;
     }
+    update_transmission(car);
 }
 
 // Cuda Kernel
@@ -144,7 +180,7 @@ __global__ void simulate_lap(const CarSetup* setups, SimResult* results, int num
         car.current_gear = track[0].real_gear;
         car.current_seg = 0;
         car.time_s = 0.0f;
-        car.qualifying_mode = true; // Assuming qualifying mode is true for all setups initially
+        car.qualifying_mode = false; // Assuming qualifying mode is true for all setups initially
         car.throttle_pedal = 0.0f;
         car.brake_pedal = 0.0f;
         

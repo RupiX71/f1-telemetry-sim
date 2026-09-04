@@ -17,7 +17,7 @@ std::vector<TrackSegment> load_circuit_csv(const std::string& filename) {
 
     while (std::getline(file, line)) {
         std::stringstream ss(line);
-        std::string length_str, radius_str, x_str, y_str, speed_str, rpm_str, gear_str;
+        std::string length_str, radius_str, x_str, y_str, speed_str, rpm_str, gear_str, throttle_str, brake_str;
 
         if (std::getline(ss, length_str, ',') && 
                 std::getline(ss, radius_str, ',') &&
@@ -25,7 +25,9 @@ std::vector<TrackSegment> load_circuit_csv(const std::string& filename) {
                 std::getline(ss, y_str, ',') && 
                 std::getline(ss, speed_str, ',') &&
                 std::getline(ss, rpm_str, ',') &&
-                std::getline(ss, gear_str, ',')
+                std::getline(ss, gear_str, ',') &&
+                std::getline(ss, throttle_str, ',') &&
+                std::getline(ss, brake_str, ',')
             ) {
             
             TrackSegment seg;
@@ -36,6 +38,8 @@ std::vector<TrackSegment> load_circuit_csv(const std::string& filename) {
             seg.real_speed_kmh = std::stof(speed_str);
             seg.real_rpm = std::stof(rpm_str);
             seg.real_gear = std::stof(gear_str);
+            seg.real_throttle_pedal = std::stof(throttle_str);
+            seg.real_brake_pedal = std::stof(brake_str);
             track.push_back(seg);
         }
     }

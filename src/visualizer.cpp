@@ -5,9 +5,75 @@
 #include <algorithm>
 #include <math.h>
 
-void update_draw_hud(sf::RenderWindow& window, sf::Text& txt_telemetry, sf::Text& txt_timings,
-                     const F1Car& car, float real_speed_kmh, float s1, float s2, float s3, float last_lap_time) {
+#define WIDTH 1280
+#define HEIGHT 720
 
+struct TrackRenderData {
+    float min_x, max_y;
+    float offset_x, offset_y;
+    float scale;
+    sf::VertexArray track_lines;
+};
+
+TrackRenderData build_track_shapes(const std::vector<TrackSegment>& track) {
+    TrackRenderData data;
+    data.track_lines.setPrimitiveType(sf::LineStrip);
+    data.track_lines.resize(track.size());
+
+    float min_x = track[0].x, max_x = track[0].x;
+    float min_y = track[0].y, max_y = track[0].y;
+
+    for (const auto& pt : track) {
+        if (pt.x < min_x) min_x = pt.x;
+        if (pt.x > max_x) max_x = pt.x;
+        if (pt.y < min_y) min_y = pt.y;
+        if (pt.y > max_y) max_y = pt.y;
+    }
+
+    data.min_x = min_x;
+    data.max_y = max_y;
+
+    float margin = 50.0f;
+    float scale_x = (WIDTH - 2.0f * margin) / (max_x - min_x);
+    float scale_y = (HEIGHT - 2.0f * margin) / (max_y - min_y);
+    data.scale = std::min(scale_x, scale_y);
+    
+    data.offset_x = (WIDTH - ((max_x - min_x) * data.scale)) / 2.0f;
+    data.offset_y = (HEIGHT - ((max_y - min_y) * data.scale)) / 2.0f;
+
+    for (size_t i = 0; i < track.size(); ++i) {
+        float screen_x = data.offset_x + (track[i].x - min_x) * data.scale;
+        float screen_y = data.offset_y + (max_y - track[i].y) * data.scale;
+        data.track_lines[i].position = sf::Vector2f(screen_x, screen_y);
+        data.track_lines[i].color = sf::Color(150, 150, 150);
+    }
+    
+    return data;
+}
+
+void reset_car_state(F1Car& car, const std::vector<TrackSegment>& track) {
+    car.v = track[0].real_speed_kmh / 3.6f;
+    car.battery_mj = Config::MAX_BATTERY_MJ;
+    car.current_gear = track[0].real_gear;
+    car.rpm = track[0].real_rpm;
+    car.current_seg = 0;
+    car.current_m = 0.0f;
+    car.time_s = 0.0f;
+    car.qualifying_mode = true;
+    car.throttle_pedal = 0.0f;
+    car.brake_pedal = 0.0f;
+    car.action = DriverAction::ACCELERATE;
+}
+
+void update_draw_hud(sf::RenderWindow& window, sf::Text& txt_telemetry, sf::Text& txt_timings,
+                     const F1Car& car, const std::vector<TrackSegment>& track, 
+                     float s1, float s2, float s3, float last_lap_time, float sim_speed, 
+                     const sf::Font& font) { // <-- Recebe a fonte e a pista
+
+    float width = window.getSize().x;
+    float height = window.getSize().y;
+    
+    // 1. Textos Base (Os teus originais)
     std::string action_str;
     switch(car.action) {
         case DriverAction::BRAKE: action_str = "Brakes(" + std::to_string(static_cast<int>(car.brake_pedal * 100)) + "%)"; break;
@@ -16,24 +82,25 @@ void update_draw_hud(sf::RenderWindow& window, sf::Text& txt_telemetry, sf::Text
     }
 
     float sim_speed_kmh = car.v * 3.6f;
-    float delta_kmh = sim_speed_kmh - real_speed_kmh;
 
-    char buf_tel[256];
+    char buf_tel[512];
     snprintf(buf_tel, sizeof(buf_tel),
-        "\tEngine and Dynamics\t\n"
         "Sim: %.2f km/h\n"
-        "Real: %.2f km/h\n"
-        "Delta: %+.2f km/h\n"
         "Action: %s\n"
         "MGU-K: %.2f MJ\n"
-        " ----------------\n"
-        "Gear: %d | RPM: %.0f\n",
-        sim_speed_kmh, real_speed_kmh, delta_kmh, action_str.c_str(), car.battery_mj, car.current_gear, car.rpm);
+        "Sim Speed: %.1fx\n\n"
+        "--- TRACK ---\n"
+        "Seg: %d / %lu\n"
+        "Radius: %s",
+        sim_speed_kmh, action_str.c_str(), 
+        car.battery_mj, sim_speed,
+        car.current_seg, track.size(),
+        (track[car.current_seg].radius_m >= 10000.f) ? "STRAIGHT" : std::to_string((int)track[car.current_seg].radius_m).c_str());
+    
     txt_telemetry.setString(buf_tel);
 
     char buf_timing[256];
     snprintf(buf_timing, sizeof(buf_timing),
-        "\tTimings\t\n"
         "S1: %.3f\n"
         "S2: %.3f\n"
         "S3: %.3f\n"
@@ -42,61 +109,79 @@ void update_draw_hud(sf::RenderWindow& window, sf::Text& txt_telemetry, sf::Text
         s1, s2, s3, car.time_s, last_lap_time);
     txt_timings.setString(buf_timing);
 
+    // 2. Gráficos: Pedais (Canto Inferior Esquerdo)
+    float pedal_w = 30.f;
+    float pedal_h = 100.f;
+    float base_x = 20.f;
+    float base_y = height - 20.f; 
+
+    sf::RectangleShape brake_bg(sf::Vector2f(pedal_w, -pedal_h)); 
+    brake_bg.setPosition(base_x, base_y);
+    brake_bg.setFillColor(sf::Color(50, 50, 50, 200));
+
+    sf::RectangleShape throttle_bg(sf::Vector2f(pedal_w, -pedal_h));
+    throttle_bg.setPosition(base_x + 40.f, base_y);
+    throttle_bg.setFillColor(sf::Color(50, 50, 50, 200));
+
+    sf::RectangleShape brake_fill(sf::Vector2f(pedal_w, -(pedal_h * car.brake_pedal)));
+    brake_fill.setPosition(base_x, base_y);
+    brake_fill.setFillColor(sf::Color(220, 50, 50)); 
+
+    sf::RectangleShape throttle_fill(sf::Vector2f(pedal_w, -(pedal_h * car.throttle_pedal)));
+    throttle_fill.setPosition(base_x + 40.f, base_y);
+    throttle_fill.setFillColor(sf::Color(50, 220, 50)); 
+
+    // 3. Gráficos: Conta-Rotações (Centro Fundo)
+    float hud_x = width / 2.0f - 200.f;
+    float hud_y = height - 50.f;
+
+    sf::RectangleShape rpm_bg(sf::Vector2f(400.f, 20.f));
+    rpm_bg.setPosition(hud_x, hud_y);
+    rpm_bg.setFillColor(sf::Color(50, 50, 50, 200));
+
+    float rpm_pct = std::min(car.rpm / 12500.0f, 1.0f);
+    sf::RectangleShape rpm_fill(sf::Vector2f(400.f * rpm_pct, 20.f));
+    rpm_fill.setPosition(hud_x, hud_y);
+    rpm_fill.setFillColor(car.rpm > 11800.0f ? sf::Color::Red : sf::Color::Green);
+
+    char gear_buf[64];
+    snprintf(gear_buf, sizeof(gear_buf), "GEAR: %d   %3.0f KM/H", car.current_gear, sim_speed_kmh);
+    sf::Text text_gear(gear_buf, font, 24);
+    text_gear.setPosition(hud_x + 100.f, hud_y - 35.f);
+    text_gear.setFillColor(sf::Color::White);
+
+    // 4. Desenhar tudo
     window.draw(txt_telemetry);
     window.draw(txt_timings);
+    
+    window.draw(brake_bg);
+    window.draw(throttle_bg);
+    window.draw(brake_fill);
+    window.draw(throttle_fill);
+    
+    window.draw(rpm_bg);
+    window.draw(rpm_fill);
+    window.draw(text_gear);
 }
 
-// all of this code should get divided lmao this way to crazy
 void run_sfml_visualizer(const std::vector<TrackSegment>& track, const CarSetup& setup) {
 
     std::cout << "[SFML] Getting track limits..." << std::endl;
     // Track getter
-    std::vector<sf::Vector2f> points(track.size());
-    for (size_t i = 0; i < track.size(); ++i) {
-        points[i].x = track[i].x;
-        points[i].y = track[i].y;
-    }
-
-    float min_x = points[0].x, max_x = points[0].x;
-    float min_y = points[0].y, max_y = points[0].y;
-
-    for (const auto& pt : points) {
-        if (pt.x < min_x) min_x = pt.x;
-        if (pt.x > max_x) max_x = pt.x;
-        if (pt.y < min_y) min_y = pt.y;
-        if (pt.y > max_y) max_y = pt.y;
-    }
+    TrackRenderData t_data = build_track_shapes(track);
 
     // Windows Creation
-    int window_width = 1280;
-    int window_height = 720;
     sf::ContextSettings settings;
     settings.antialiasingLevel = 8;
-    sf::RenderWindow window(sf::VideoMode(window_width, window_height), "F1 Telemetry Visualizer");
+    sf::RenderWindow window(sf::VideoMode(WIDTH, HEIGHT), "F1 Telemetry Visualizer");
     window.setFramerateLimit(60);
-
-    // track visualization (way to hard)
-    float margin = 50.0f;
-    float scale_x = (window_width - 2.0f * margin) / (max_x - min_x);
-    float scale_y = (window_height - 2.0f * margin) / (max_y - min_y);
-    float scale = std::min(scale_x, scale_y);
-    float offset_x = (window_width - ((max_x - min_x) * scale)) / 2.0f;
-    float offset_y = (window_height - ((max_y - min_y) * scale)) / 2.0f;
-    sf::VertexArray track_lines(sf::LineStrip, track.size());
-    for (size_t i = 0; i < track.size(); ++i) {
-        float screen_x = offset_x + (points[i].x - min_x) * scale;
-        float screen_y = offset_y + (max_y - points[i].y) * scale;
-
-        track_lines[i].position = sf::Vector2f(screen_x, screen_y);
-        track_lines[i].color = sf::Color(150, 150, 150);
-    }
     
-
-    // the car shape
+    // the car shape init
     sf::CircleShape car_shape(6.0f);
     car_shape.setFillColor(sf::Color::Red);
     car_shape.setOrigin(6.0f, 6.0f);
 
+    // Text and telemetry initialization
     sf::Font font;
     if (!font.loadFromFile("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")) {
         std::cerr << "[SFML] Font not found!" << std::endl;
@@ -110,72 +195,71 @@ void run_sfml_visualizer(const std::vector<TrackSegment>& track, const CarSetup&
     text_timings.setFillColor(sf::Color::White);
     text_timings.setPosition(1100, 20);
 
+    // car initialization
     F1Car car;
-    car.v = track[0].real_speed_kmh / 3.6f;
-    car.battery_mj = 4.0f;
-    car.current_gear = track[0].real_gear;
-    car.rpm = track[0].real_rpm;
-    car.current_seg = 0;
-    car.time_s = 0.0f;
-    car.qualifying_mode = true;
-    car.throttle_pedal = 0.0f;
-    car.brake_pedal = 0.0f;
+    reset_car_state(car, track);
     
     // (2ms per step)
-    float physics_dt = 0.002f; 
-    int steps_per_frame = 8; // 8 * 2ms = 16ms
+    float physics_dt = 0.002f;
+    float sim_speed_multiplier = 1.0f;
+    const int base_steps_per_frame = 8;
 
     int sector1_end = track.size() / 3;
     int sector2_end = (track.size() * 2) / 3;
-
-    float time_s1 = 0.0f;
-    float time_s2 = 0.0f;
-    float time_s3 = 0.0f;
-    float last_lap_time = 0.0f;
+    float time_s1 = 0.0f, time_s2 = 0.0f, time_s3 = 0.0f, last_lap_time = 0.0f;
     int prev_seg = 0;
-
     std::vector<sf::CircleShape> telemetry_trail;
     int frame_counter = 0;
+    bool isPaused = false;
 
     while (window.isOpen()) {
         sf::Event event;
         while (window.pollEvent(event)) {
             if (event.type == sf::Event::Closed) window.close();
+            
+            if (event.type == sf::Event::KeyPressed) {
+                if (event.key.code == sf::Keyboard::R) {
+                    reset_car_state(car, track);
+                    telemetry_trail.clear();
+                    time_s1 = time_s2 = time_s3 = last_lap_time = 0.0f;
+                }
+                else if (event.key.code == sf::Keyboard::Up) {
+                    sim_speed_multiplier += 0.5f; 
+                }
+                else if (event.key.code == sf::Keyboard::Down) {
+                    sim_speed_multiplier = std::max(0.1f, sim_speed_multiplier - 0.5f);
+                }
+                else if (event.key.code == sf::Keyboard::Space) {
+                    isPaused = !isPaused;
+                }
+            }
         }
 
-        for (int i = 0; i < steps_per_frame; ++i) {
-            if (car.current_seg >= track.size() - 1) {
-                car.current_seg = 0;
-                car.battery_mj = 4.0f;
-                car.time_s = 0.0f;
-            }
-            
-            int old_seg = car.current_seg;
+        if (!isPaused) {
+            int current_steps = std::max(1, static_cast<int>(base_steps_per_frame * sim_speed_multiplier));
+            for (int i = 0; i < current_steps; ++i) {
+                int old_seg = car.current_seg;
 
-            step_physics(&car, &setup, track.data(), track.size(), physics_dt);
+                step_physics(&car, &setup, track.data(), track.size(), physics_dt);
 
-            if (old_seg < sector1_end && car.current_seg >= sector1_end) {
-                time_s1 = car.time_s;
-            } else if (old_seg < sector2_end && car.current_seg >= sector2_end) {
-                time_s2 = car.time_s - time_s1;
-            }
+                if (old_seg < sector1_end && car.current_seg >= sector1_end) {
+                    time_s1 = car.time_s;
+                } else if (old_seg < sector2_end && car.current_seg >= sector2_end) {
+                    time_s2 = car.time_s - time_s1;
+                }
 
-            if (car.current_seg >= track.size() - 1) {
-                time_s3 = car.time_s - (time_s1 + time_s2);
-                last_lap_time = car.time_s;
-
-                car.current_seg = 0;
-                car.current_m = 0;
-                car.battery_mj = Config::MAX_BATTERY_MJ;
-                car.time_s = 0.0f;
-
-                telemetry_trail.clear();
+                if (car.current_seg >= track.size() - 1) {
+                    time_s3 = car.time_s - (time_s1 + time_s2);
+                    last_lap_time = car.time_s;
+                    
+                    reset_car_state(car, track);
+                    telemetry_trail.clear();
+                }
             }
         }
 
         int next_idx = (car.current_seg + 1) % track.size();
         
-        // this needs to be done to fix the car position lmao
         float ax = track[car.current_seg].x;
         float ay = track[car.current_seg].y;
         float bx = track[next_idx].x;
@@ -183,10 +267,13 @@ void run_sfml_visualizer(const std::vector<TrackSegment>& track, const CarSetup&
         float seg_length = track[car.current_seg].length_m;
         float dir_x = (bx - ax) / seg_length;
         float dir_y = (by - ay) / seg_length;
+        
         float real_car_x = ax + (dir_x * car.current_m);
         float real_car_y = ay + (dir_y * car.current_m);
-        float screen_car_x = offset_x + (real_car_x - min_x) * scale;
-        float screen_car_y = offset_y + (max_y - real_car_y) * scale;
+        
+        // Usamos as variáveis matemáticas que vieram no pacote t_data
+        float screen_car_x = t_data.offset_x + (real_car_x - t_data.min_x) * t_data.scale;
+        float screen_car_y = t_data.offset_y + (t_data.max_y - real_car_y) * t_data.scale;
         
         sf::Color current_color = (car.action == DriverAction::ACCELERATE) ? sf::Color::Green :
                                 (car.action == DriverAction::BRAKE) ? sf::Color::Red : sf::Color::Yellow;
@@ -202,25 +289,21 @@ void run_sfml_visualizer(const std::vector<TrackSegment>& track, const CarSetup&
         }
 
         car_shape.setPosition(screen_car_x, screen_car_y);
-        char buffer[512];
 
-        float sim_speed_kmh = car.v * 3.6f;
         float real_speed_kmh = track[car.current_seg].real_speed_kmh;
-        float delta_speed = sim_speed_kmh - real_speed_kmh;
-
 
         window.clear(sf::Color(20, 20, 20));
 
-        window.draw(track_lines);
+        window.clear(sf::Color(20, 20, 20));
+
+        window.draw(t_data.track_lines);
 
         for (const auto& dot : telemetry_trail) {
             window.draw(dot);
         }
-
         window.draw(car_shape);
 
-        update_draw_hud(window, text_telemetry, text_timings, car, real_speed_kmh, time_s1, time_s2, time_s3, last_lap_time);
-
+        update_draw_hud(window, text_telemetry, text_timings, car, track, time_s1, time_s2, time_s3, last_lap_time, sim_speed_multiplier, font);
         window.display();
     }
 }

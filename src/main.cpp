@@ -26,7 +26,7 @@ int main() {
     std::mt19937 gen(888); 
     std::uniform_real_distribution<float> ice_dist(380.0f, 420.0f);
     std::uniform_real_distribution<float> mguk_dist(300.0f, 350.0f);
-    std::uniform_real_distribution<float> drag_dist(0.7f, 1.2f);
+    std::uniform_real_distribution<float> drag_dist(0.9f, 1.5f);
 
     for(int i = 0 ; i < Config::NUM_SETUPS ; ++i) {
         setups[i].id = i;

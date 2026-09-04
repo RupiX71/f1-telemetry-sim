@@ -10,7 +10,7 @@ if not os.path.exists("cache"):
   os.makedirs("cache")
 fastf1.Cache.enable_cache("cache")
 
-# Carrega a sessão de Monza 2025
+# Loading the session data (Ex: Monza 2025 Qualifying)
 session = fastf1.get_session(2025, "Monza", "Q")
 session.load(telemetry=True, weather=False, messages=False)
 
@@ -20,15 +20,15 @@ print(
     f"Telemetry loaded. {lap['Driver']} set the fastest lap: {lap['LapTime']}."
 )
 
-# --- 1. MELHORAR DEFINIÇÃO DOS SEGMENTOS (Interpolação Espacial) ---
-# Criamos uma nova grade de distância perfeita (ex: de 1 em 1 metro)
+# Interpolating telemetry data to have a uniform distance step (1 meter) for better curvature calculation
+# and x, y. z speed. rpm and gear.
 distancia_original = tel["Distance"].to_numpy()
 total_distance = distancia_original[-1]
-# Segmentos fixos de 1 metro (mude para 0.5 ou 2 se quiser mais/menos pontos)
+# Fixed segments of 1 meter
 distancia_uniforme = np.arange(0, total_distance, 1.0)
 
-# Interpolamos X, Y, Z com base na nova distância uniforme
-# Usamos 'pchip' (Piecewise Cubic Hermite Interpolating Polynomial) pois preserva melhor as curvas que a linear
+# Interpolate
+# Using 'pchip' (Piecewise Cubic Hermite Interpolating Polynomial)
 x_interp = pchip_interpolate(distancia_original, tel["X"].to_numpy(), distancia_uniforme)
 y_interp = pchip_interpolate(distancia_original, tel["Y"].to_numpy(), distancia_uniforme)
 z_interp = pchip_interpolate(distancia_original, tel["Z"].to_numpy(), distancia_uniforme)
@@ -36,6 +36,8 @@ speed_interp = pchip_interpolate(distancia_original, tel["Speed"].to_numpy(), di
 rpm_interp = pchip_interpolate(distancia_original, tel["RPM"].to_numpy(), distancia_uniforme)
 # nGear goes from 1 to 8, so we can round the interpolated values to the nearest integer
 gear_interp = np.round(pchip_interpolate(distancia_original, tel["nGear"].to_numpy(), distancia_uniforme)).astype(int)
+throttle_pedal_interp = np.round(pchip_interpolate(distancia_original, tel["Throttle"].to_numpy(), distancia_uniforme))
+brake_pedal_interp = np.round(pchip_interpolate(distancia_original, tel["Throttle"].to_numpy(), distancia_uniforme))
 
 df = pd.DataFrame({
     "Distance": distancia_uniforme,
@@ -44,26 +46,27 @@ df = pd.DataFrame({
     "Z": z_interp,
     "Real Speed": speed_interp,
     "RPM": rpm_interp,
-    "nGear": gear_interp
+    "nGear": gear_interp,
+    "Throttle": throttle_pedal_interp,
+    "Brake": brake_pedal_interp
 })
 
-# --- 2. ROTAÇÃO ---
+# Track Rotation
 circuit_info = session.get_circuit_info()
-# Converte o ângulo oficial de graus para radianos (e inverte o sinal para alinhar com o padrão matemático)
+# Converts the oficial circuit rotation
 angle_rad = -circuit_info.rotation / 180 * np.pi
 
 cos_theta = np.cos(angle_rad)
 sin_theta = np.sin(angle_rad)
 
-# Aplicação da rotação correta
+# Appliying the correct rotation
 x_rot = df["X"] * cos_theta - df["Y"] * sin_theta
 y_rot = df["X"] * sin_theta + df["Y"] * cos_theta
 
 df["X"] = x_rot
 df["Y"] = y_rot
 
-# --- 3. CÁLCULO DO RAIO DE CURVATURA ---
-# Como a distância agora é constante (1m), o gradient fica muito mais preciso
+# Curvature radius calculation
 dx = np.gradient(df["X"])
 dy = np.gradient(df["Y"])
 ddx = np.gradient(dx)
@@ -72,22 +75,22 @@ ddy = np.gradient(dy)
 denominator = (dx**2 + dy**2) ** 1.5 + 1e-8
 curvature = np.abs(dx * ddy - dy * ddx) / denominator
 
-# Define raio máximo para retas
+# Defines the maximum radius for curves
 df["Radius"] = np.where(curvature > 1e-3, 1 / curvature, 10000)
 
-# Suavização leve no raio para evitar picos abruptos em mudanças de direção
+# Smoothing
 df["Radius"] = (
     df["Radius"].rolling(window=5, min_periods=1, center=True).mean()
 )
 
-# Tamanho do segmento (agora será sempre ~1.0 devido à interpolação)
+# Segment length now will be always 1 meter
 df["Segment_Length"] = df["Distance"].diff().fillna(df["Distance"].iloc[0])
 
-# --- 4. EXPORTAÇÃO ---
+# Exporting to ../data folder
 if not os.path.exists("../data"):
   os.makedirs("../data")
 
 output_path = "../data/monza_pole.csv"
-df[["Segment_Length", "Radius", "X", "Y", "Real Speed", "RPM", "nGear"]].to_csv(output_path, index=False)
+df[["Segment_Length", "Radius", "X", "Y", "Real Speed", "RPM", "nGear", "Throttle", "Brake"]].to_csv(output_path, index=False)
 
 print(f"Success! Exported {len(df)} segments to {output_path}")
